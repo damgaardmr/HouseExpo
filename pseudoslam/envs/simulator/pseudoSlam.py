@@ -1,10 +1,19 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2, os
+from pathlib import Path  # added
 
 import yaml
-import pseudoslam.envs.simulator.util as util
-import pseudoslam.envs.simulator.jsonReader as jsonReader
+try:
+    from yaml import CLoader as Loader
+except ImportError:
+    from yaml import Loader
+
+# import pseudoslam.envs.simulator.util as util
+# import pseudoslam.envs.simulator.jsonReader as jsonReader
+import misc.HouseExpo.pseudoslam.envs.simulator.util as util
+import misc.HouseExpo.pseudoslam.envs.simulator.jsonReader as jsonReader
+
 
 import time
 
@@ -35,15 +44,17 @@ class pseudoSlam():
         self.world= np.zeros([1,1])
         self.obstacle_config = obstacle_config
         self.traj = []
+        self.continues_actions = False # ADDED
 
         with open(param_file) as stream:
-            self.config = yaml.load(stream)
+            self.config = yaml.load(stream, Loader=Loader)
 
         """json reader init"""
         self.json_reader = jsonReader.jsonReader(self.config['json_dir'], self.config['meter2pixel'])
         """ set map_color """
         self.map_color = map_color
-        self.map_id_set = np.loadtxt(os.path.join(os.path.dirname(__file__), "../", self.config['map_id_set']), str)
+        #self.map_id_set = np.loadtxt(os.path.join(os.path.dirname(__file__), "../", self.config['map_id_set']), str)  # Changed
+        self.map_id_set = np.loadtxt(os.path.abspath(os.path.join(os.path.dirname(__file__), Path("../"), Path(self.config['map_id_set']))), str)  # Changed
 
         """ Initialize user config param """
         self.initialize_param(self.config)
@@ -102,6 +113,12 @@ class pseudoSlam():
 
         """ unknown mode """
         self.is_exploration = (config["mode"] == 0)
+
+        try: # ADDED
+            self.continues_actions = config["continuesActions"]
+        except:
+            print("Assumes Discrete Actions")
+
         return
 
     def create_world(self, order=False, padding=10):
@@ -110,7 +127,9 @@ class pseudoSlam():
             map_id = self.map_id_set[0]
             self.map_id_set = np.delete(self.map_id_set, 0)
         else:
-            map_id = np.random.choice(self.map_id_set)
+            LocalProcRandGen = np.random.RandomState()
+            map_id = LocalProcRandGen.choice(self.map_id_set)
+            # map_id = np.random.choice(self.map_id_set) <-- does not go well with multiprocessing
         input_world, _ = self.json_reader.read_json(map_id)
 
         """ process world into simulator compatible map """
@@ -223,12 +242,20 @@ class pseudoSlam():
         h, w = self.world.shape
         x_min, x_max = int(0.1 * w), int(0.8 * w)
         y_min, y_max = int(0.1 * h), int(0.8 * h)
-        self.robotPose[0] = np.random.randint(y_min, y_max)
-        self.robotPose[1] = np.random.randint(x_min, x_max)
+
+        # ################## CHANGED ##################
+        LocalProcRandGen = np.random.RandomState()
+        self.robotPose[0] = LocalProcRandGen.randint(y_min, y_max)
+        self.robotPose[1] = LocalProcRandGen.randint(x_min, x_max) 
+        # self.robotPose[0] = np.random.randint(y_min, y_max)  # <-- does not go well with multiprocessing
+        # self.robotPose[1] = np.random.randint(x_min, x_max)  # <-- does not go well with multiprocessing
 
         while (self.robotCrashed(self.robotPose)):
-            self.robotPose[0] = np.random.randint(y_min, y_max)
-            self.robotPose[1] = np.random.randint(x_min, x_max)
+            # ################## CHANGED ##################
+            self.robotPose[0] = LocalProcRandGen.randint(y_min, y_max)
+            self.robotPose[1] = LocalProcRandGen.randint(x_min, x_max) 
+            # self.robotPose[0] = np.random.randint(y_min, y_max)  # <-- does not go well with multiprocessing
+            # self.robotPose[1] = np.random.randint(x_min, x_max)  # <-- does not go well with multiprocessing
         self.robotPose[2] = np.random.rand() * np.pi * 2
         return self.robotPose
 
@@ -383,9 +410,53 @@ class pseudoSlam():
         self._build_map_with_rangeCoordMat(y_rangeCoordMat,x_rangeCoordMat)
         return self.slamMap
 
+    def moveRobot(self, moveAction): ################### ADDED!! ###################
+        if self.continues_actions:
+            return self.moveRobot_continues(moveAction)
+        else:
+            return self.moveRobot_discrete(moveAction)
 
+    def moveRobot_continues(self, moveAction):
+        motion = moveAction
+        dvX = motion[0]*self.stepLength_linear # x motion
+        dvY = motion[1]*self.stepLength_linear # y motion
+        """ oversample the motion in each step """
+        # sampleNo= 2
+        samplePixel= 7
+        sampleNo= 50#np.max([np.abs(dvX)*1.0/samplePixel, np.abs(dvX)*1.0/samplePixel]) ## consider something that is not hard coded!
 
-    def moveRobot(self, moveAction):
+        moveLength_step= dvX*1./sampleNo
+        moveLength_total= 0
+        i=0
+        while(i<sampleNo):
+
+            # check if remaining step < moveLength_step, if yes, just move the remaining length instead of the whole moveLength_step
+            remain_length= self.stepLength_linear-moveLength_total
+            if 0< remain_length and remain_length <moveLength_step:
+                moveLength_step= self.stepLength_linear-moveLength_total
+
+            y= self.robotPose[0] + dvX/sampleNo
+            x= self.robotPose[1] + dvY/sampleNo
+            theta= self.robotPose[2] # stays the same
+            targetPose= np.array([y,x,theta])
+
+            # check if robot will crash on obstacle or go out of bound
+            if self.robotCrashed(targetPose):
+                self.robotCrashed_flag= True
+                # print("Robot crash")
+                return False
+
+            # if moveAction == "forward":
+            #    self.traj.append([int(x), int(y)])  # only save distince pts
+
+            # build map on the targetPose
+            self.build_map( targetPose )
+            i=i+1
+            moveLength_total+= samplePixel
+
+        return True
+
+    def moveRobot_discrete(self, moveAction):  # NAME HAS CHANGED!
         """ move robot with moveAction with forward | left | right """
         motion= self.motionChoice[moveAction]
         dv= motion[0]*self.stepLength_linear # forward motion
@@ -477,8 +548,23 @@ class pseudoSlam():
     def get_crashed(self):
         return self.robotCrashed_flag
 
-    def measure_ratio(self):
-        mapped_pixel= np.sum(self.slamMap==self.map_color['free'])
-        world_pixel= np.sum(self.world==self.map_color['free'])
+    def measure_ratio(self):  # exploration percentage
+        world_pixel = np.sum(self.world==self.map_color['free'])
+
+        ################### CHANGED!! ###################
+        # This way of calculating it has the problem that when noise is used the ratio can be greater than 1
+        # i.e. we have explored more of the map than possible
+        # mapped_pixel= np.sum(self.slamMap==self.map_color['free'])
+        # world_pixel= np.sum(self.world==self.map_color['free'])
+
+        # We should only count the pixels that actually can be observed, but it is hard
+        # to distinguish which of the occupied pixels can actually be observed (only the boarder)
+        # so we only count the free space pixels.
+        # Here we do not distinguish between free and occupied pixels, since we believ that as long
+        # as the value of the pixels is not perfectly "uncertain" it should be considered explored
+        # eventhough the current map estimate is wrong!
+        true_free_idx = self.world==self.map_color['free']
+        mapped_pixel= np.sum(self.slamMap[true_free_idx]!=self.map_color['uncertain'])
 
         return 1.*mapped_pixel/world_pixel
+
