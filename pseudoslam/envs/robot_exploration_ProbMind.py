@@ -162,23 +162,27 @@ class RobotExplorationProbMind(gym.Env):
             return False
 
     def _check_if_goal_is_visable(self):      
-        where_equal_mask = np.nonzero(self.sim.world==self.sim.slamMap)
-        tmp1 = np.zeros_like(self.sim.world)
-        tmp1[where_equal_mask] = 1
-        tmp2 = np.zeros_like(self.sim.world)
-        tmp2[self.goal_zone_mask] = 1
-
         visible_slamMap = np.zeros_like(self.sim.slamMap, dtype=bool)
         visible_slamMap[self.sim.y_all_noise,self.sim.x_all_noise] = True
 
-        where_equal_mask = np.logical_and(tmp1, tmp2)
-        where_equal_mask = np.logical_and(where_equal_mask, visible_slamMap)  # we only want to consider pixels actually in the FOV
+        where_equal_mask = np.logical_and(self.goal_zone_mask, visible_slamMap)
         where_equal_idx = np.argwhere(where_equal_mask)
-        
-        # plt.figure(np.random.randint(1000))
-        # visible_ = np.zeros_like(self.sim.slamMap)
-        # visible_[where_equal_mask] = -101
-        # plt.imshow(visible_, cmap='gray')
+
+        # fig = plt.figure(101)
+        # plt.imshow(self.goal_zone_mask) #, cmap='gray')
+        # fig.canvas.draw()
+        # fig.canvas.flush_events()
+
+        # fig = plt.figure(104)
+        # plt.imshow(visible_slamMap) #, cmap='gray')
+        # fig.canvas.draw()
+        # fig.canvas.flush_events()
+
+        # fig = plt.figure(105) #(np.random.randint(1000))
+        # plt.imshow(where_equal_mask) #, cmap='gray')
+        # fig.canvas.draw()
+        # fig.canvas.flush_events()
+
 
         if np.sum(where_equal_idx)>0:
             # draw random index as the center of the goal zone

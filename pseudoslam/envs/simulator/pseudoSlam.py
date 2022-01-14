@@ -391,8 +391,8 @@ class pseudoSlam():
         [y_all_noise,x_all_noise, y_coord,x_coord]= self._laser_slam_error(y_rangeCoordMat,x_rangeCoordMat,y_coord,x_coord,b)
         self.slamMap[y_all_noise,x_all_noise]= self.world[y_coord,x_coord]
 
-        self.y_all_noise = y_rangeCoordMat 
-        self.x_all_noise = x_rangeCoordMat
+        self.y_all_noise = y_all_noise 
+        self.x_all_noise = x_all_noise
 
         """ dilate/close to fill the holes """
         # self.dslamMap= cv2.morphologyEx(self.slamMap,cv2.MORPH_CLOSE,np.ones((3,3)))
