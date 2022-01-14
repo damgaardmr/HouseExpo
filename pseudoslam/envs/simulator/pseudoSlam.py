@@ -11,9 +11,10 @@ except ImportError:
 
 # import pseudoslam.envs.simulator.util as util
 # import pseudoslam.envs.simulator.jsonReader as jsonReader
-import misc.HouseExpo.pseudoslam.envs.simulator.util as util
-import misc.HouseExpo.pseudoslam.envs.simulator.jsonReader as jsonReader
-
+#import misc.HouseExpo.pseudoslam.envs.simulator.util as util
+#import misc.HouseExpo.pseudoslam.envs.simulator.jsonReader as jsonReader
+from . import util
+from . import jsonReader
 
 import time
 
@@ -390,6 +391,8 @@ class pseudoSlam():
         [y_all_noise,x_all_noise, y_coord,x_coord]= self._laser_slam_error(y_rangeCoordMat,x_rangeCoordMat,y_coord,x_coord,b)
         self.slamMap[y_all_noise,x_all_noise]= self.world[y_coord,x_coord]
 
+        self.y_all_noise = y_rangeCoordMat 
+        self.x_all_noise = x_rangeCoordMat
 
         """ dilate/close to fill the holes """
         # self.dslamMap= cv2.morphologyEx(self.slamMap,cv2.MORPH_CLOSE,np.ones((3,3)))
@@ -420,6 +423,7 @@ class pseudoSlam():
         motion = moveAction
         dvX = motion[0]*self.stepLength_linear # x motion
         dvY = motion[1]*self.stepLength_linear # y motion
+        dtheta = motion[2]*self.stepLength_angular # rotational motion
         """ oversample the motion in each step """
         # sampleNo= 2
         samplePixel= 7
@@ -437,7 +441,9 @@ class pseudoSlam():
 
             y= self.robotPose[0] + dvX/sampleNo
             x= self.robotPose[1] + dvY/sampleNo
-            theta= self.robotPose[2] # stays the same
+            # theta= self.robotPose[2] # stays the same
+            theta= self.robotPose[2] + dtheta/sampleNo
+
             targetPose= np.array([y,x,theta])
 
             # check if robot will crash on obstacle or go out of bound

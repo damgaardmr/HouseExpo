@@ -8,22 +8,72 @@ from gym import spaces
 from gym.utils import seeding
 
 from pathlib import Path
-from .simulator.pseudoSlam import pseudoSlam
+if __name__ == '__main__':
+    from simulator.pseudoSlam import pseudoSlam
+else:
+    from .simulator.pseudoSlam import pseudoSlam
+
+import yaml
+try:
+    from yaml import CLoader as Loader, CDumper as Dumper
+except ImportError:
+    from yaml import Loader, Dumper
 
 class RobotExplorationProbMind(gym.Env):
-    def __init__(self, config_path='sim_config.yaml'):
+    def __init__(self, config_path='config_probMind.yaml'):
         if config_path.startswith("/"):
             fullpath = config_path
         else:
-            fullpath = path.join(path.dirname(__file__), config_path)
+            fullpath = path.join(path.dirname(__file__), "config", config_path)
+        print(fullpath)
         if not path.exists(fullpath):
             raise IOError("File %s does not exist" % fullpath)
+
+        with open(Path(fullpath), 'r') as stream:
+            try:
+                configs = yaml.load(stream, Loader=Loader)
+            except yaml.YAMLError as exc:
+                print(exc)
 
         self.sim = pseudoSlam(Path(fullpath))
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
         self.last_map = self.sim.get_state()
         self.last_action = None
+
+        self.configs = configs
+        if self.configs["reachGoalMode"]:
+            self.generate_goal()
+
+    def generate_goal(self):
+        goal_radius = self.configs["goal_zone_radius"]
+        r_in_pixels = int(np.ceil(goal_radius * self.configs["meter2pixel"]))
+        color = (255, 255, 255)
+        thickness = -1  # fully filled circle
+
+        reachable = False
+        while not reachable:  # check if the goal zone collide with any obstacles in the world
+            g_x = np.random.randint(r_in_pixels, self.sim.world.shape[1] - r_in_pixels, (1,))[0]
+            g_y = np.random.randint(r_in_pixels, self.sim.world.shape[0] - r_in_pixels, (1,))[0]
+            goal_pos_in_pixels = [g_x, g_y]
+
+            world_with_goal_zone = self.sim.world.copy()
+            cv2.circle(world_with_goal_zone, goal_pos_in_pixels, r_in_pixels, color, thickness)
+            goal_zone_mask = self.sim.world!=world_with_goal_zone
+            if np.sum(np.abs(self.sim.world[goal_zone_mask])) == 0:
+                reachable = True
+
+        self.goal_zone_mask = goal_zone_mask
+        self.goal_pos_in_pixels = goal_pos_in_pixels
+        self.goal_pos_in_m = [g_x / self.configs["meter2pixel"], g_y / self.configs["meter2pixel"]]
+        
+        # print(goal_pos_in_pixels)
+        # plt.figure(np.random.randint(1000))
+        # world_with_goal_tmp = self.sim.world.copy()
+        # world_with_goal_tmp[goal_zone_mask] = -101
+        # plt.imshow(world_with_goal_tmp, cmap='gray')
+        # plt.show()
+
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -47,18 +97,17 @@ class RobotExplorationProbMind(gym.Env):
         self.sim.reset(order)
         self.last_map = self.sim.get_state()
         self.last_action = None
+        if self.configs["reachGoalMode"]:
+            self.generate_goal()
         return self._get_obs()
 
     def step(self, action):
-        # action = int(action)
-        # assert action in [0, 1, 2]
-        # action = ['forward', 'left', 'right'][action]
         action_ = np.array([action[1], action[0], action[2]])  # change from [x,y] to [y,x] convention
 
         crush_flag = self.sim.moveRobot(action_)
 
-        pose_ = self.sim.get_pose()  # + noise on pose?????
-        pose = np.array([pose_[1] / self.sim.m2p, pose_[0] / self.sim.m2p, pose_[2]])  # change from [y,x] to [x,y] convention
+        pose_pixels = self.sim.get_pose()  # + noise on pose?????
+        self.pose = np.array([pose_pixels[1] / self.sim.m2p, pose_pixels[0] / self.sim.m2p, pose_pixels[2]])  # change from [y,x] to [x,y] convention and in meters instead of pixels
 
         grid_map_with_robot = self.sim.get_state().copy()  # returns map with robot on top
         grid_map_ = self.sim.slamMap.copy()  # only returns map
@@ -76,9 +125,16 @@ class RobotExplorationProbMind(gym.Env):
         grid_map = grid_map_ / (101 - 0)
         grid_map[unknowns] = 0.5
 
-        obs = [pose, grid_map]
+
+        if self.configs["reachGoalMode"]:
+            goal = self._check_if_goal_is_visable()
+            done = self._check_if_robot_has_reach_goal_zone()
+            obs = [self.pose, grid_map, goal]
+        else:
+            done = (self.sim.measure_ratio() > 0.95)
+            obs = [self.pose, grid_map]
+
         reward = self._compute_reward(crush_flag, action)
-        done = (self.sim.measure_ratio() > 0.95)
         info = {'is_success': done, 'is_crashed': self.sim.robotCrashed_flag, 'grid_map_with_robot': grid_map_with_robot}
 
         if self.sim.robotCrashed_flag:  # reset crash flag
@@ -88,6 +144,56 @@ class RobotExplorationProbMind(gym.Env):
 
     def close(self):
         pass
+
+    def _check_if_robot_has_reach_goal_zone(self):
+        dist_vector = np.array([self.pose[0] - self.goal_pos_in_m[0],
+                                self.pose[1] - self.goal_pos_in_m[1]])
+        goal_dist = np.linalg.norm(dist_vector)
+
+        # print([self.pose[0], self.pose[1]])
+        # print(self.goal_pos_in_m)
+        # print(dist_vector)
+        # print(goal_dist)
+        # print(goal_dist <= self.configs["goal_zone_radius"])
+
+        if goal_dist <= self.configs["goal_zone_radius"]:
+            return True
+        else:
+            return False
+
+    def _check_if_goal_is_visable(self):      
+        where_equal_mask = np.nonzero(self.sim.world==self.sim.slamMap)
+        tmp1 = np.zeros_like(self.sim.world)
+        tmp1[where_equal_mask] = 1
+        tmp2 = np.zeros_like(self.sim.world)
+        tmp2[self.goal_zone_mask] = 1
+
+        visible_slamMap = np.zeros_like(self.sim.slamMap, dtype=bool)
+        visible_slamMap[self.sim.y_all_noise,self.sim.x_all_noise] = True
+
+        where_equal_mask = np.logical_and(tmp1, tmp2)
+        where_equal_mask = np.logical_and(where_equal_mask, visible_slamMap)  # we only want to consider pixels actually in the FOV
+        where_equal_idx = np.argwhere(where_equal_mask)
+        
+        # plt.figure(np.random.randint(1000))
+        # visible_ = np.zeros_like(self.sim.slamMap)
+        # visible_[where_equal_mask] = -101
+        # plt.imshow(visible_, cmap='gray')
+
+        if np.sum(where_equal_idx)>0:
+            # draw random index as the center of the goal zone
+            # idx = np.random.randint(where_equal_idx.shape[0])
+            # noisy_pos = [where_equal_idx[idx][1]/self.configs["meter2pixel"], where_equal_idx[idx][0]/self.configs["meter2pixel"]]
+
+            # calculate centroid of visible pixels
+            centroid = np.mean(where_equal_idx, axis=0)
+            pos = [centroid[1]/self.configs["meter2pixel"], centroid[0]/self.configs["meter2pixel"]]
+            cov = np.eye(2) * self.configs["goal_zone_est_error_3_sigma"] / 3  # 99.7% of samples within a circle of "initial_3_sigma" cm
+            noisy_pos = np.random.multivariate_normal(pos, cov)
+
+            return noisy_pos
+        else:
+           return None  # the goal is not visable
 
     def _compute_reward(self, crush_flag, action):
         """Recurn the reward"""
@@ -103,7 +209,7 @@ class RobotExplorationProbMind(gym.Env):
     def _get_action_space(self):
         """Forward, left and right"""
         # return spaces.Discrete(3)
-        return spaces.Box(np.float32(np.array([-1, -1])), np.float32(np.array([1, 1])), dtype='float32')
+        return spaces.Box(np.float32(np.array([-1, -1, -1])), np.float32(np.array([1, 1, 1])), dtype='float32')
 
     def _get_observation_space(self):
         obs = self._get_obs()
@@ -167,14 +273,12 @@ if __name__ == '__main__':
         plt.clf()
         plt.imshow(env.sim.get_state().copy(), cmap='gray')
         plt.draw()
-        plt.pause(0.00001)
+        plt.pause(0.1)
         env.render()
 
         epi_cnt += 1
-        # act = np.random.randint(3)
-        act = np.random.rand(2) * 2 - 1
+        act = np.random.rand(3) * 2 - 1
         obs, reward, done, info = env.step(act)
-        cmd = ['forward', 'left', 'right']
 
         if epi_cnt > 100 or done:
             epi_cnt = 0

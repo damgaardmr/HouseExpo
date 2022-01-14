@@ -1,0 +1,46 @@
+# Env settings:
+reachGoalMode: True  # generate random goals
+goal_zone_radius: 0.5
+goal_zone_est_error_3_sigma: 0.1  # used to determine the covariance of the gaussian noise added to the estimated mean of the goal zone
+
+# Simulator setting
+continuesActions: True
+
+json_dir: ../../HouseExpo/json/
+map_id_set: ../../HouseExpo/map_id_10.txt
+meter2pixel: 32 # X pixel =1 meter
+mode: 0  # 0 for exploration mode, 1 for navigation mode
+
+obstacle:
+  number: 0 # number of obstacle added to the world
+  size: # size of obstacle added in meter, radius/half length
+    min: 0.2
+    max: 0.6
+
+# robot setting
+robotRadius: 0.05 # robot radius in meter
+stepLength:
+  linear: 1 # robot linear movement in each step in meter
+  angular: 90 # robot angular movement in each step in degree
+startPose: # robot starting pose [y;x;theta] in meter in world coord with center as origin | theta: angle to the x-axis
+  x: 0
+  y: 0
+  theta: 0
+resetRandomPose: 1 # flag of whether randomly set robot init pose ar each reset | if 0, robot reset to startPose at each reset
+
+# laser setting
+laser:
+  range: 2 # laser range in meter
+  fov: 70 # laser field of view in degree
+  resolution: 1 # laser rotation resolution in degree
+  noiseSigma: 0.5 # sigma of Gaussian distribution of laser noise
+
+# slam setting
+slamError:
+  linear: 0 # slam linear registration error in pixel
+  angular: 0 # slam rotational registration error in degree
+  
+# state setting
+stateSize: # state size in meter
+  x: 4 # state in pixel = x * meter2pixel
+  y: 4

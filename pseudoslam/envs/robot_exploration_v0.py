@@ -7,7 +7,11 @@ import gym
 from gym import spaces
 from gym.utils import seeding
 
-from pseudoslam.envs.simulator.pseudoSlam import pseudoSlam
+if __name__ == '__main__':
+    from simulator.pseudoSlam import pseudoSlam
+else:
+    from .simulator.pseudoSlam import pseudoSlam
+
 
 class RobotExplorationT0(gym.Env):
     def __init__(self, config_path='config.yaml'):
@@ -49,9 +53,9 @@ class RobotExplorationT0(gym.Env):
         return self._get_obs()
 
     def step(self, action):
-        #action = int(action)
-        #assert action in [0, 1, 2]
-        #action = ['forward', 'left', 'right'][action]
+        action = int(action)
+        assert action in [0, 1, 2]
+        action = ['forward', 'left', 'right'][action]
         crush_flag = self.sim.moveRobot(action)
 
         obs = self._get_obs()
@@ -79,8 +83,7 @@ class RobotExplorationT0(gym.Env):
 
     def _get_action_space(self):
         """Forward, left and right"""
-        # return spaces.Discrete(3)
-        return spaces.Box(np.array([-1,-1]), np.array([1,1]), dtype='float32')
+        return spaces.Discrete(3)
 
     def _get_observation_space(self):
         obs = self._get_obs()
@@ -148,15 +151,13 @@ if __name__ == '__main__':
         env.render()
         
         epi_cnt += 1
-        #act = np.random.randint(3)
-        act = np.random.rand(2)*2-1
+        act = np.random.randint(3)
         obs, reward, done, info = env.step(act)
         cmd = ['forward', 'left', 'right']
        
         if epi_cnt > 100 or done:
             epi_cnt = 0
             env.reset()
-
 
 
 
