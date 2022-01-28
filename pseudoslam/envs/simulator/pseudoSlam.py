@@ -213,8 +213,14 @@ class pseudoSlam():
                 obs_x = np.random.randint(bound, w-bound)
 
                 # check if the location of obstacle to be added intersect with other obstacle present
-                if np.sum(world_obs[obs_y-bound:obs_y+bound, obs_x-bound:obs_x+bound]==self.map_color['obstacle'])!= 0:
+                #if np.sum(world_obs[obs_y-bound:obs_y+bound, obs_x-bound:obs_x+bound]==self.map_color['obstacle'])!= 0:
+                if np.sum(world_obs[obs_y[0]-bound[0]:obs_y[0]+bound[0], obs_x[0]-bound[0]:obs_x[0]+bound[0]]==self.map_color['obstacle'])!= 0:
                     continue
+
+                print(world_obs)
+                print((obs_x,obs_y))
+                print((int(obs_a),int(obs_b)))
+                print(obs_theta)
 
                 # create obstacle patch
                 if obs_type == 0:
@@ -228,7 +234,8 @@ class pseudoSlam():
                     cv2.fillPoly(world_obs, [rect], self.map_color["obstacle"])
 
                 elif obs_type == 1:
-                    cv2.ellipse(world_obs, (obs_x,obs_y), (int(obs_a),int(obs_b)), obs_theta, 0,360, self.map_color["obstacle"],thickness=-1)
+                    # cv2.ellipse(world_obs, (obs_x,obs_y), (int(obs_a),int(obs_b)), obs_theta, 0, 360, self.map_color["obstacle"],thickness=-1)
+                    cv2.ellipse(world_obs, (obs_x,obs_y), (int(obs_a),int(obs_b)), obs_theta, 0, 360, self.map_color["obstacle"],thickness=-1)
                 else:
                     cv2.circle(world_obs, (obs_x,obs_y), int(obs_a), self.map_color["obstacle"],thickness=-1)
 
