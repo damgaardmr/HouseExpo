@@ -16,6 +16,9 @@ except ImportError:
 from . import util
 from . import jsonReader
 
+import pickle
+import lzma
+
 import time
 
 map_color= {'uncertain':-101, 'free':0, 'obstacle':100}
@@ -57,6 +60,7 @@ class pseudoSlam():
         #self.map_id_set = np.loadtxt(os.path.join(os.path.dirname(__file__), "../", self.config['map_id_set']), str)  # Changed
         self.map_id_set = np.loadtxt(os.path.abspath(os.path.join(os.path.dirname(__file__), Path("../"), Path(self.config['map_id_set']))), str)  # Changed
 
+
         """ Initialize user config param """
         self.initialize_param(self.config)
 
@@ -84,9 +88,14 @@ class pseudoSlam():
 
         """ robot starting pose """
         # robot starting pose in world coordinate and rad with the form of [y;x;theta]
-        self.config_poseInit[0]= config["startPose"]["y"]
-        self.config_poseInit[1]= config["startPose"]["x"]
-        self.config_poseInit[2]= util.deg2rad( config["startPose"]["theta"] )
+        if isinstance(config["startPose"], str): # check if the startPose is contained in a file
+            pickleFilePath = config["startPose"]
+            f = lzma.open(pickleFilePath, 'rb')
+            self.config_poseInit = pickle.load(f)
+        else:
+            self.config_poseInit[0]= config["startPose"]["y"]
+            self.config_poseInit[1]= config["startPose"]["x"]
+            self.config_poseInit[2]= util.deg2rad(config["startPose"]["theta"] )
 
         # flag of robot randomly reset start pose in each reset
         self.robotResetRandomPose= config["resetRandomPose"]
@@ -124,21 +133,38 @@ class pseudoSlam():
 
     def create_world(self, order=False, padding=10):
         """ read maps in order if True, else randomly sample"""
-        if order:
-            map_id = self.map_id_set[0]
-            self.map_id_set = np.delete(self.map_id_set, 0)
+
+
+        if self.map_id_set.ndim > 0: # handle case with only one entry in map_id_set
+            if order:
+                map_id = self.map_id_set[0]
+                self.map_id_set = np.delete(self.map_id_set, 0)
+            else:
+                LocalProcRandGen = np.random.RandomState()
+                map_id = LocalProcRandGen.choice(self.map_id_set)
+                # map_id = np.random.choice(self.map_id_set) <-- does not go well with multiprocessing
         else:
-            LocalProcRandGen = np.random.RandomState()
-            map_id = LocalProcRandGen.choice(self.map_id_set)
-            # map_id = np.random.choice(self.map_id_set) <-- does not go well with multiprocessing
+            map_id = np.str_(self.map_id_set)
+
         input_world, _ = self.json_reader.read_json(map_id)
 
         """ process world into simulator compatible map """
         self.world= self._map_process(input_world, padding=padding)
 
         (h,w)= self.world.shape
-        self.robotPose_init[0:2]= util.world2mapCoord(self.config_poseInit, (h*0.5,w*0.5), self.m2p)
-        self.robotPose_init[2]= self.config_poseInit[2]
+
+        if isinstance(self.config_poseInit, dict): # check if the startPose is contained in a file
+            config_poseInit_ = np.array([0.0,0.0,0.0])
+            config_poseInit_[0] = self.config_poseInit[map_id]["y"]
+            config_poseInit_[1] = self.config_poseInit[map_id]["x"]
+            config_poseInit_[2] = util.deg2rad(self.config_poseInit[map_id]["theta"])
+
+        else:
+            config_poseInit_ = self.config_poseInit
+
+        self.robotPose_init[0:2]= util.world2mapCoord(config_poseInit_, (h*0.5,w*0.5), self.m2p)
+        self.robotPose_init[2]= config_poseInit_[2]
+
         self.add_obstacle()
         self.map_id = map_id.copy()
 
@@ -265,17 +291,36 @@ class pseudoSlam():
             # self.robotPose[0] = np.random.randint(y_min, y_max)  # <-- does not go well with multiprocessing
             # self.robotPose[1] = np.random.randint(x_min, x_max)  # <-- does not go well with multiprocessing
         self.robotPose[2] = np.random.rand() * np.pi * 2
+        self.robotPose_init = self.robotPose.copy() # just to save it for "get_config_poseInit(...)"
         return self.robotPose
+
+    def get_config_poseInit(self):
+        (h,w)= self.world.shape
+        config_poseInit = {}
+        tmp = util.map2worldCoord(self.robotPose_init, (h*0.5,w*0.5), self.m2p)
+        config_poseInit["y"] = tmp[0]
+        config_poseInit["x"] = tmp[1]
+        config_poseInit["theta"] = util.rad2deg(self.robotPose_init[2])
+
+        return config_poseInit
+
 
     def reset(self, order=False):
         self.traj.clear()
         self.create_world(order)
+
 
         if (self.robotResetRandomPose==1) or (self.robotCrashed(self.robotPose_init)):
             # randomly generate robot start pose where robot is not crashed into obstacle
             self._randomizeRobotPose()
         else:
             self.robotPose = self.robotPose_init
+
+        #self.config_poseInit= np.array([2,0,0])
+        #(h,w)= self.world.shape
+        #self.robotPose_init[0:2]= util.world2mapCoord(self.config_poseInit, (h*0.5,w*0.5), self.m2p)
+        #self.robotPose_init[2]= self.config_poseInit[2]
+        #self.robotPose = self.robotPose_init
 
         self.robotCrashed_flag= False
         if self.is_exploration:

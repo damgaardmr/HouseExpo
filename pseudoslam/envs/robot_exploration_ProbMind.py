@@ -35,6 +35,7 @@ class RobotExplorationProbMind(gym.Env):
             except yaml.YAMLError as exc:
                 print(exc)
 
+        print("fullpath: " + str(fullpath))
         self.sim = pseudoSlam(Path(fullpath))
         self.action_space = self._get_action_space()
         self.observation_space = self._get_observation_space()
@@ -42,10 +43,17 @@ class RobotExplorationProbMind(gym.Env):
         self.last_action = None
 
         self.configs = configs
+        self.goal_always_observed = configs["goal_always_observed"]
         if self.configs["reachGoalMode"]:
+            if "randomGoal" in self.configs:
+                self.randomGoal = self.configs["randomGoal"]
+                self.goal_position_config = [self.configs["goalPosition"]["x"], self.configs["goalPosition"]["y"]]
+            else:
+               self.randomGoal = True
             self.generate_goal()
 
-    def generate_goal(self):
+
+    def generate_goal(self,recursion_depth=0):
         goal_radius = self.configs["goal_zone_radius"]
         r_in_pixels = int(np.ceil(goal_radius * self.configs["meter2pixel"]))
         color = (255, 255, 255)
@@ -53,27 +61,32 @@ class RobotExplorationProbMind(gym.Env):
 
         reachable = False
         while not reachable:  # check if the goal zone collide with any obstacles in the world
-            g_x = np.random.randint(r_in_pixels, self.sim.world.shape[1] - r_in_pixels, (1,))[0]
-            g_y = np.random.randint(r_in_pixels, self.sim.world.shape[0] - r_in_pixels, (1,))[0]
-            goal_pos_in_pixels = [g_x, g_y]
 
+            if self.randomGoal:
+                print("r_in_pixels: " + str(r_in_pixels))
+                print("sim.world.shape: " + str(self.sim.world.shape))
+                print("sim.world.shape: " + str(self.sim.world.shape))
+                g_x = np.random.randint(r_in_pixels, self.sim.world.shape[1] - r_in_pixels, (1,))[0]
+                g_y = np.random.randint(r_in_pixels, self.sim.world.shape[0] - r_in_pixels, (1,))[0]
+            else:
+                g_x = int(self.goal_position_config[0]*self.configs["meter2pixel"])
+                g_y = int(self.goal_position_config[1]*self.configs["meter2pixel"])
+
+            goal_pos_in_pixels = [g_x, g_y]
             world_with_goal_zone = self.sim.world.copy()
             cv2.circle(world_with_goal_zone, goal_pos_in_pixels, r_in_pixels, color, thickness)
             goal_zone_mask = self.sim.world!=world_with_goal_zone
             if np.sum(np.abs(self.sim.world[goal_zone_mask])) == 0:
                 reachable = True
+            else:
+                if recursion_depth == 100 and not self.randomGoal:
+                    raise NameError('Invalid Goal zone location! Failed to generate goal after ' + str(recursion_depth) + ' tries')
+                else:
+                    self.generate_goal(recursion_depth=recursion_depth+1)
 
         self.goal_zone_mask = goal_zone_mask
         self.goal_pos_in_pixels = goal_pos_in_pixels
         self.goal_pos_in_m = [g_x / self.configs["meter2pixel"], g_y / self.configs["meter2pixel"]]
-        
-        # print(goal_pos_in_pixels)
-        # plt.figure(np.random.randint(1000))
-        # world_with_goal_tmp = self.sim.world.copy()
-        # world_with_goal_tmp[goal_zone_mask] = -101
-        # plt.imshow(world_with_goal_tmp, cmap='gray')
-        # plt.show()
-
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -121,18 +134,16 @@ class RobotExplorationProbMind(gym.Env):
         # 1 occupied
         # normalize
         unknowns = np.where(grid_map_ == -101)  # find id of unknowns
-        grid_map_[unknowns] = 50.5  # find id of unknowns
-        grid_map = grid_map_ / (101 - 0)
-        grid_map[unknowns] = 0.5
-
+        grid_map_[unknowns] = 50.0  # find id of unknowns
+        grid_map = grid_map_ / (100 - 0)
 
         if self.configs["reachGoalMode"]:
             goal = self._check_if_goal_is_visable()
             done = self._check_if_robot_has_reach_goal_zone()
-            obs = [self.pose, grid_map, goal]
         else:
             done = (self.sim.measure_ratio() > 0.95)
-            obs = [self.pose, grid_map]
+            goal = None
+        obs = [self.pose, grid_map, goal]
 
         reward = self._compute_reward(crush_flag, action)
         info = {'is_success': done, 'is_crashed': self.sim.robotCrashed_flag, 'grid_map_with_robot': grid_map_with_robot}
@@ -161,43 +172,46 @@ class RobotExplorationProbMind(gym.Env):
         else:
             return False
 
-    def _check_if_goal_is_visable(self):      
-        visible_slamMap = np.zeros_like(self.sim.slamMap, dtype=bool)
-        visible_slamMap[self.sim.y_all_noise,self.sim.x_all_noise] = True
-
-        where_equal_mask = np.logical_and(self.goal_zone_mask, visible_slamMap)
-        where_equal_idx = np.argwhere(where_equal_mask)
-
-        # fig = plt.figure(101)
-        # plt.imshow(self.goal_zone_mask) #, cmap='gray')
-        # fig.canvas.draw()
-        # fig.canvas.flush_events()
-
-        # fig = plt.figure(104)
-        # plt.imshow(visible_slamMap) #, cmap='gray')
-        # fig.canvas.draw()
-        # fig.canvas.flush_events()
-
-        # fig = plt.figure(105) #(np.random.randint(1000))
-        # plt.imshow(where_equal_mask) #, cmap='gray')
-        # fig.canvas.draw()
-        # fig.canvas.flush_events()
-
-
-        if np.sum(where_equal_idx)>0:
-            # draw random index as the center of the goal zone
-            # idx = np.random.randint(where_equal_idx.shape[0])
-            # noisy_pos = [where_equal_idx[idx][1]/self.configs["meter2pixel"], where_equal_idx[idx][0]/self.configs["meter2pixel"]]
-
-            # calculate centroid of visible pixels
-            centroid = np.mean(where_equal_idx, axis=0)
-            pos = [centroid[1]/self.configs["meter2pixel"], centroid[0]/self.configs["meter2pixel"]]
-            cov = np.eye(2) * self.configs["goal_zone_est_error_3_sigma"] / 3  # 99.7% of samples within a circle of "initial_3_sigma" cm
-            noisy_pos = np.random.multivariate_normal(pos, cov)
-
-            return noisy_pos
+    def _check_if_goal_is_visable(self):
+        if self.goal_always_observed:
+            return self.goal_pos_in_m
         else:
-           return None  # the goal is not visable
+            visible_slamMap = np.zeros_like(self.sim.slamMap, dtype=bool)
+            visible_slamMap[self.sim.y_all_noise,self.sim.x_all_noise] = True
+
+            where_equal_mask = np.logical_and(self.goal_zone_mask, visible_slamMap)
+            where_equal_idx = np.argwhere(where_equal_mask)
+
+            # fig = plt.figure(101)
+            # plt.imshow(self.goal_zone_mask) #, cmap='gray')
+            # fig.canvas.draw()
+            # fig.canvas.flush_events()
+
+            # fig = plt.figure(104)
+            # plt.imshow(visible_slamMap) #, cmap='gray')
+            # fig.canvas.draw()
+            # fig.canvas.flush_events()
+
+            # fig = plt.figure(105) #(np.random.randint(1000))
+            # plt.imshow(where_equal_mask) #, cmap='gray')
+            # fig.canvas.draw()
+            # fig.canvas.flush_events()
+
+
+            if np.sum(where_equal_idx)>0:
+                # draw random index as the center of the goal zone
+                # idx = np.random.randint(where_equal_idx.shape[0])
+                # noisy_pos = [where_equal_idx[idx][1]/self.configs["meter2pixel"], where_equal_idx[idx][0]/self.configs["meter2pixel"]]
+
+                # calculate centroid of visible pixels
+                centroid = np.mean(where_equal_idx, axis=0)
+                pos = [centroid[1]/self.configs["meter2pixel"], centroid[0]/self.configs["meter2pixel"]]
+                cov = np.eye(2) * self.configs["goal_zone_est_error_3_sigma"] / 3  # 99.7% of samples within a circle of "initial_3_sigma" cm
+                noisy_pos = np.random.multivariate_normal(pos, cov)
+
+                return noisy_pos
+            else:
+               return None  # the goal is not visable
 
     def _compute_reward(self, crush_flag, action):
         """Recurn the reward"""

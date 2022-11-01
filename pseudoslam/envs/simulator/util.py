@@ -64,8 +64,8 @@ def world2mapCoord(p_world, worldOrigin, m2p_ratio=1):
     worldOrigin: [y,x] in pixel in img coord | p_world: [y,x] in meter in world coord
     return p_map: [y,x] in pixel in img coord """
 
-    p_map_y= worldOrigin[0] - p_world[0]*m2p_ratio
-    p_map_x= worldOrigin[1] + p_world[1]*m2p_ratio
+    p_map_y = worldOrigin[0] - p_world[0]*m2p_ratio
+    p_map_x = worldOrigin[1] + p_world[1]*m2p_ratio
     return np.array([p_map_y,p_map_x])
 
 def map2worldCoord(p_map, worldOrigin, m2p_ratio=1):
